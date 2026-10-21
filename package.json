@@ -1,9 +1,19 @@
 {
-	"name": "agent-side",
+	"name": "@wolfiesch/side",
 	"version": "0.1.0",
 	"description": "Fork a running coding-agent session into a nearby terminal pane: Claude Code, Codex, and omp, in tmux, Tern, WezTerm, Kitty, cmux, or Ghostty",
 	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/wolfiesch/agent-side.git"
+	},
 	"type": "module",
+	"engines": {
+		"bun": ">=1.2"
+	},
+	"publishConfig": {
+		"access": "public"
+	},
 	"bin": {
 		"side": "./src/cli.ts"
 	},
