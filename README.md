@@ -134,6 +134,8 @@ bunx tsc -p .
 
 To re-record the demo with [VHS](https://github.com/charmbracelet/vhs), run `demo/setup.sh`, open `claude` in `/tmp/side-demo` once to trust the folder, then run `vhs demo/side.tape`. The recording drives a real session, so each take differs.
 
+To release, bump `version` in `package.json` on `main`, then push a matching tag, for example `git tag v0.1.1 && git push origin v0.1.1`. The Release workflow runs the checks and publishes to npm through [trusted publishing](https://docs.npmjs.com/trusted-publishers), so no npm token is stored and each release carries provenance.
+
 ## License
 
 MIT
