@@ -2,11 +2,15 @@
 /**
  * side: fork the coding-agent session you are in into a nearby terminal pane.
  *
+ *   /side why would that cache miss?          in Claude Code ($side in Codex), after install-hook
  *   !side why would that cache miss?          from inside Claude Code, Codex, or omp
  *   side --pane-pid 4242                      from a terminal keybinding, outside the agent
  */
 import { basename } from "node:path";
 import { agentExecutable, HARNESSES, type Harness, type HarnessName } from "./harness";
+import {
+	blockResponse, hookCommand, hookPaths, installHook, parseHookInput, parseTrigger, uninstallHook, type HookHarness,
+} from "./hook";
 import { ancestors, descendants, executablePath, readProcessTable, type ProcessInfo, type ProcessTable } from "./process";
 import {
 	createRunner, detectTerminal, launchInTerminal, paneTitle,
@@ -15,11 +19,14 @@ import {
 
 const USAGE = `usage: side [options] [harness options] [-- prompt]
        side <prompt>
+       side install-hook claude|codex      add /side to Claude Code, or $side to Codex
+       side uninstall-hook claude|codex
 
 Fork the Claude Code, Codex, or omp session you are in into a nearby pane and ask <prompt> there.
 
-Run it from inside the agent (!side ... in its shell), or from a terminal
-keybinding with --pane-pid. Options that side does not know pass through to the agent,
+Run it as /side <prompt> in Claude Code or $side <prompt> in Codex once the hook is
+installed, as !side ... in any agent's shell, or from a terminal keybinding with --pane-pid.
+Options that side does not know pass through to the agent,
 so --model and friends work. Put -- before a prompt when you pass any options.
 
   --bg                      keep focus here
@@ -216,15 +223,8 @@ export async function resolveSource(
 	return { harness, id: harness.sessionFromEnv(env) as string, agent: undefined, binaryHost };
 }
 
-async function main(argv: string[]): Promise<number> {
-	const options = parseArgs(argv);
-	if (options.help) {
-		console.log(USAGE);
-		return 0;
-	}
-	const env = process.env;
-	const run = createRunner();
-	const source = await resolveSource(options, env, run, process.pid);
+/** Fork `source` per `options`; returns the line to show the user (or the plan, for --dry-run). */
+async function forkSession(source: Source, options: SideOptions, env: NodeJS.ProcessEnv, run: Runner): Promise<string> {
 	const location = source.harness.locate(source.id, env);
 	const executable = agentExecutable(source.harness, source.agent ?? source.binaryHost, env.PATH);
 	const forkArgv = source.harness.forkArgv(
@@ -232,7 +232,7 @@ async function main(argv: string[]): Promise<number> {
 	);
 	const terminal = detectTerminal(env);
 	if (options.dryRun) {
-		console.log(JSON.stringify({
+		return JSON.stringify({
 			harness: source.harness.name,
 			session: source.id,
 			agentPid: source.agent?.pid,
@@ -241,13 +241,68 @@ async function main(argv: string[]): Promise<number> {
 			terminal,
 			request: options.request,
 			argv: forkArgv,
-		}, null, 2));
-		return 0;
+		}, null, 2);
 	}
 	const result = await launchInTerminal(
 		run, env, process.platform, options.request, location.cwd, forkArgv, paneTitle(options.prompt),
 	);
-	console.log(`side: forked ${source.harness.name} session ${source.id} into ${result.terminal} ${result.placement} ${result.target}`);
+	return `side: forked ${source.harness.name} session ${source.id} into ${result.terminal} ${result.placement} ${result.target}`;
+}
+
+/**
+ * The `UserPromptSubmit` hook. Any prompt other than `/side …` or `$side …` passes through
+ * untouched. A side prompt is always blocked, even when the fork fails, so it never reaches the
+ * model; the agent shows the fork result or the error in its place.
+ */
+async function runHook(harness: HookHarness, stdin: string, env: NodeJS.ProcessEnv): Promise<string | undefined> {
+	const input = parseHookInput(stdin);
+	const argv = input && parseTrigger(input.prompt);
+	if (!input || !argv) return undefined;
+	try {
+		const options = parseArgs(argv);
+		if (options.help) return blockResponse(USAGE);
+		if (options.harness || options.session || options.pid !== undefined || options.panePid !== undefined) {
+			throw new Error("this command forks the session you are in; --harness, --session, --pid, and --pane-pid are side CLI options");
+		}
+		const run = createRunner();
+		const agent = ancestors(await readProcessTable(run), process.pid).find((info) => HARNESSES[harness].isAgentProcess(info));
+		return blockResponse(await forkSession({ harness: HARNESSES[harness], id: input.sessionId, agent }, options, env, run));
+	} catch (error) {
+		return blockResponse(`side: ${error instanceof Error ? error.message : String(error)}`);
+	}
+}
+
+const isHookHarness = (name: string | undefined): name is HookHarness => name === "claude" || name === "codex";
+
+async function main(argv: string[]): Promise<number> {
+	const [command, target, ...extra] = argv;
+	const env = process.env;
+	if ((command === "hook" || command === "install-hook" || command === "uninstall-hook") && isHookHarness(target) && extra.length === 0) {
+		if (command === "hook") {
+			const response = await runHook(target, await Bun.stdin.text(), env);
+			if (response) console.log(response);
+			return 0;
+		}
+		const paths = hookPaths(target, env);
+		if (command === "uninstall-hook") {
+			console.log(uninstallHook(paths) ? `side: removed the ${target} hook` : `side: no ${target} hook was installed`);
+			return 0;
+		}
+		installHook(paths, hookCommand(target, process.execPath, import.meta.path));
+		console.log(
+			target === "claude"
+				? `side: added the /side hook to ${paths.config} and the command to ${paths.command}. Restart running Claude Code sessions to pick it up.`
+				: `side: added the $side hook to ${paths.config}. Restart running Codex sessions, then open /hooks in Codex and trust it; Codex skips a new hook until you do.`,
+		);
+		return 0;
+	}
+	const options = parseArgs(argv);
+	if (options.help) {
+		console.log(USAGE);
+		return 0;
+	}
+	const run = createRunner();
+	console.log(await forkSession(await resolveSource(options, env, run, process.pid), options, env, run));
 	return 0;
 }
 
