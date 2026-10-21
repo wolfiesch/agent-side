@@ -267,8 +267,9 @@ describe("agentExecutable", () => {
 		writeFileSync(join(bin, "omp"), "");
 		writeFileSync(join(bin, "bun"), "");
 		const agent = proc(9, join(bin, "bun"), "bun --preload /x/scripts/omp.ts /x/src/cli.ts");
-		expect(agentExecutable(omp, agent, `/nowhere:${bin}`)).toBe(join(bin, "omp"));
-		expect(agentExecutable(omp, proc(9, join(bin, "omp")), "")).toBe(join(bin, "omp"));
+		// macOS reports the executable path, so the process table alone names the binary.
+		expect(agentExecutable(omp, agent, `/nowhere:${bin}`, "darwin")).toBe(join(bin, "omp"));
+		expect(agentExecutable(omp, proc(9, join(bin, "omp")), "", "darwin")).toBe(join(bin, "omp"));
 	});
 
 	test("a bare comm falls back to an absolute argv[0], even one with spaces", () => {
