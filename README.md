@@ -6,6 +6,8 @@ Fork the Claude Code, Codex, or [omp](https://github.com/can1357/oh-my-pi) sessi
 /side why would that cache miss?
 ```
 
+![/side forking a Claude Code session into a tmux split beside it](https://raw.githubusercontent.com/wolfiesch/agent-side/main/demo/side.gif)
+
 The fork is a real session created by the agent's own fork command (`claude --resume <id> --fork-session`, `codex fork <id>`, `omp --fork <transcript>`): it gets the whole transcript and its own session file, and nothing it does reaches the original conversation.
 
 Placement comes from [omp-side](https://github.com/wolfiesch/omp-side), the `/side` command for Oh My Pi, with launch adapters for tmux, [Tern](https://stencil.so/tern), WezTerm, Kitty, [cmux](https://cmux.com), and Ghostty.
@@ -129,6 +131,8 @@ bun install
 bun test
 bunx tsc -p .
 ```
+
+To re-record the demo with [VHS](https://github.com/charmbracelet/vhs), run `demo/setup.sh`, open `claude` in `/tmp/side-demo` once to trust the folder, then run `vhs demo/side.tape`. The recording drives a real session, so each take differs.
 
 ## License
 
