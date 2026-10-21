@@ -5,8 +5,9 @@
  *   !side why would that cache miss?          from inside Claude Code, Codex, or omp
  *   side --pane-pid 4242                      from a terminal keybinding, outside the agent
  */
+import { basename } from "node:path";
 import { agentExecutable, HARNESSES, type Harness, type HarnessName } from "./harness";
-import { ancestors, descendants, readProcessTable, type ProcessInfo, type ProcessTable } from "./process";
+import { ancestors, descendants, executablePath, readProcessTable, type ProcessInfo, type ProcessTable } from "./process";
 import {
 	createRunner, detectTerminal, launchInTerminal, paneTitle,
 	type Direction, type LaunchRequest, type Runner,
@@ -140,6 +141,12 @@ export interface Source {
 	id: string;
 	/** The agent process, when one was found; its binary is reused for the fork. */
 	agent?: ProcessInfo;
+	/**
+	 * Without an agent process, the nearest ancestor running the harness's binary. Codex runs `!`
+	 * commands from its shared app-server daemon, not under the TUI, and gives them a PATH that
+	 * need not contain `codex`; the daemon is that same binary.
+	 */
+	binaryHost?: ProcessInfo;
 }
 
 const ANY_AGENT = "Claude Code, Codex, or omp";
@@ -201,7 +208,12 @@ export async function resolveSource(
 				: `not inside a ${ANY_AGENT} session: run side from the agent (!side ...), or pass --pane-pid, --pid, or --session`,
 		);
 	}
-	return { harness: exported[0], id: exported[0].sessionFromEnv(env) as string, agent: undefined };
+	const harness = exported[0];
+	const binaryHost = ancestors(table, selfPid).find((info) => {
+		const path = executablePath(info);
+		return path !== undefined && basename(path) === harness.name && harness.isOwnBinary(path);
+	});
+	return { harness, id: harness.sessionFromEnv(env) as string, agent: undefined, binaryHost };
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -214,7 +226,7 @@ async function main(argv: string[]): Promise<number> {
 	const run = createRunner();
 	const source = await resolveSource(options, env, run, process.pid);
 	const location = source.harness.locate(source.id, env);
-	const executable = agentExecutable(source.harness, source.agent, env.PATH);
+	const executable = agentExecutable(source.harness, source.agent ?? source.binaryHost, env.PATH);
 	const forkArgv = source.harness.forkArgv(
 		executable, { id: source.id, transcript: location.transcript }, options.harnessArgs, options.prompt,
 	);

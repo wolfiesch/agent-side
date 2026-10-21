@@ -1,5 +1,5 @@
 /** Process-table helpers for finding the agent that owns a shell or a terminal pane. */
-import { readlinkSync } from "node:fs";
+import { readlinkSync, statSync } from "node:fs";
 import { checked, type Runner } from "./terminal";
 
 export interface ProcessInfo {
@@ -70,7 +70,12 @@ export function descendants(table: ProcessTable, pid: number): ProcessInfo[] {
 	return out;
 }
 
-/** The binary a process is running, as an absolute path when the platform reports one. */
+/**
+ * The binary a process is running, as an absolute path when the platform reports one. On macOS
+ * `comm` is usually that path, but a process can report a bare name there (Codex's app bundle
+ * does), so an absolute argv[0] is the fallback. argv[0] may contain spaces, and `ps` joins it
+ * to the arguments with spaces, so the shortest prefix naming a file is taken.
+ */
 export function executablePath(info: ProcessInfo, platform: NodeJS.Platform = process.platform): string | undefined {
 	if (platform === "linux") {
 		try {
@@ -79,5 +84,19 @@ export function executablePath(info: ProcessInfo, platform: NodeJS.Platform = pr
 			return undefined;
 		}
 	}
-	return info.comm.startsWith("/") ? info.comm : undefined;
+	if (info.comm.startsWith("/")) return info.comm;
+	if (!info.args.startsWith("/")) return undefined;
+	for (let end = info.args.indexOf(" "); ; end = info.args.indexOf(" ", end + 1)) {
+		const candidate = end === -1 ? info.args : info.args.slice(0, end);
+		if (isFile(candidate)) return candidate;
+		if (end === -1) return undefined;
+	}
+}
+
+function isFile(path: string): boolean {
+	try {
+		return statSync(path).isFile();
+	} catch {
+		return false;
+	}
 }

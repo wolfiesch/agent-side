@@ -135,6 +135,22 @@ describe("resolveSource", () => {
 		expect((await resolve(["--harness", "claude"], both, processes, 300)).id).toBe(CLAUDE_ID);
 	});
 
+	// executablePath reads /proc/<pid>/exe on Linux, which the fake table cannot supply.
+	test.skipIf(process.platform === "linux")(
+		"a Codex `!` command runs under the app-server daemon, whose binary the fork reuses",
+		async () => {
+			const processes = table(
+				proc(1, 0, "/sbin/launchd"),
+				proc(400, 1, "/opt/Codex.app/Contents/MacOS/codex", "/opt/Codex.app/Contents/MacOS/codex app-server --listen x"),
+				proc(401, 400, "/bin/zsh", "/bin/zsh -c side"),
+				proc(402, 401, "/opt/bin/bun", "bun side"),
+			);
+			const source = await resolve([], { CODEX_THREAD_ID: CODEX_ID }, processes, 402);
+			expect(source).toMatchObject({ id: CODEX_ID, agent: undefined });
+			expect(source.binaryHost?.pid).toBe(400);
+		},
+	);
+
 	test("errors outside any agent", async () => {
 		const processes = table(proc(1, 0, "/sbin/launchd"), proc(300, 1, "/bin/zsh", "-zsh"));
 		await expect(resolve([], {}, processes, 300)).rejects.toThrow("not inside a Claude Code, Codex, or omp session");

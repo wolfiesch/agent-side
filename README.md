@@ -90,7 +90,7 @@ Codex TUIs share one background `codex app-server` that keeps every open thread,
 
 1. **Find the session.** Inside an agent, `side` reads the session id the agent exports to shell commands (`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`). omp exports none, so `side` asks the omp process above it which transcript it holds open. When agents are nested, the nearest agent process above `side` decides.
 2. **Find the transcript** (`~/.claude/projects/*/<id>.jsonl`, `~/.codex/sessions/**/rollout-*<id>.jsonl`, or the open omp transcript) and the working directory it recorded. The fork starts there.
-3. **Find the agent binary** from the running agent process, so shell wrappers and version managers do not matter. `PATH` is the fallback.
+3. **Find the agent binary** from the running agent process, so shell wrappers and version managers do not matter. Codex runs `!` commands from its shared `codex app-server` daemon rather than under the TUI, so there `side` reuses the daemon's binary. `PATH` is the fallback.
 4. **Place a pane** and run the fork command in it.
 
 ### Automatic placement

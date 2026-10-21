@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { agentExecutable, claude, codex, omp, ompSessionFromOpenFiles, openFiles } from "./harness";
-import type { ProcessInfo } from "./process";
+import { executablePath, type ProcessInfo } from "./process";
 import type { Runner } from "./terminal";
 
 const UUID = "0198a1b2-c3d4-4e5f-8a9b-0c1d2e3f4a5b";
@@ -269,5 +269,17 @@ describe("agentExecutable", () => {
 		const agent = proc(9, join(bin, "bun"), "bun --preload /x/scripts/omp.ts /x/src/cli.ts");
 		expect(agentExecutable(omp, agent, `/nowhere:${bin}`)).toBe(join(bin, "omp"));
 		expect(agentExecutable(omp, proc(9, join(bin, "omp")), "")).toBe(join(bin, "omp"));
+	});
+
+	test("a bare comm falls back to an absolute argv[0], even one with spaces", () => {
+		// Codex's app bundle reports comm "codex" with the full path only in argv.
+		const bundle = join(root, "My Apps", "CodexCLI.app", "Contents", "MacOS");
+		mkdirSync(bundle, { recursive: true });
+		const binary = join(bundle, "codex");
+		writeFileSync(binary, "");
+		expect(executablePath(proc(9, "codex", `${binary} resume ${UUID}`), "darwin")).toBe(binary);
+		expect(executablePath(proc(9, "codex", binary), "darwin")).toBe(binary);
+		expect(executablePath(proc(9, "codex", "codex resume x"), "darwin")).toBeUndefined();
+		expect(executablePath(proc(9, "codex", `${join(root, "gone")} --flag`), "darwin")).toBeUndefined();
 	});
 });
