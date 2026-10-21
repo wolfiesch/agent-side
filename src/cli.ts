@@ -156,10 +156,13 @@ export async function resolveSource(
 	const nearestAgent = ancestors(table, selfPid).find((info) => harnessOf(info, options.harness));
 
 	if (options.pid !== undefined || options.panePid !== undefined) {
+		// A pane may run the agent directly rather than under a shell, so the pane process counts too.
+		const paneProcess = options.panePid !== undefined ? table.get(options.panePid) : undefined;
 		const agent =
 			options.pid !== undefined
 				? table.get(options.pid)
-				: descendants(table, options.panePid as number).find((info) => harnessOf(info, options.harness));
+				: [...(paneProcess ? [paneProcess] : []), ...descendants(table, options.panePid as number)]
+					.find((info) => harnessOf(info, options.harness));
 		const harness = agent && harnessOf(agent, options.harness);
 		if (!agent || !harness) {
 			throw new Error(

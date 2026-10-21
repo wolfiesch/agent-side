@@ -154,6 +154,17 @@ describe("resolveSource", () => {
 		expect(source.agent?.pid).toBe(501);
 	});
 
+	test("--pane-pid accepts a pane whose own process is the agent", async () => {
+		const processes = table(
+			proc(1, 0, "/sbin/launchd"),
+			proc(500, 1, "/opt/bin/codex", `/opt/bin/codex resume ${CODEX_ID}`),
+			proc(300, 1, "/opt/bin/bun", "bun side"),
+		);
+		const source = await resolve(["--pane-pid", "500"], {}, processes, 300);
+		expect(source).toMatchObject({ id: CODEX_ID });
+		expect(source.agent?.pid).toBe(500);
+	});
+
 	test("--pane-pid errors when no agent runs under the pane, and --pid when the process is not an agent", async () => {
 		const processes = table(
 			proc(1, 0, "/sbin/launchd"),

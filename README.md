@@ -58,13 +58,25 @@ Use `--` to separate flags from the prompt. Without it, a leading `-` means flag
 
 ### While the agent is busy
 
-`!side` waits for the current turn. To fork mid-turn, bind a key in your terminal that runs `side` against the pane. In tmux:
+`!side` waits for the current turn. To fork mid-turn, run `side` against the pane from outside the agent. The fork starts from the last point the agent saved, and the running turn continues undisturbed.
+
+**tmux.** Bind a key:
 
 ```tmux
-bind-key S run-shell 'TMUX_PANE=#{pane_id} side --pane-pid #{pane_pid} --bg'
+bind-key S run-shell 'TMUX_PANE=#{pane_id} side --pane-pid #{pane_pid} >/dev/null'
 ```
 
-This finds the agent under the pane's shell and forks its session from the last saved point. The running turn continues undisturbed.
+`>/dev/null` keeps the success message from switching the pane into view mode. Errors still appear there; press `q` to dismiss them.
+
+**Tern.** Link the bundled plugin:
+
+```sh
+tern plugin link ./tern
+```
+
+Press `ctrl+alt+shift+s`, or run "Fork this agent session beside it" from the command palette. The result appears as a toast. The plugin finds `side` in `~/.bun/bin`, `~/.local/bin`, `/opt/homebrew/bin`, or `/usr/local/bin` when Tern was opened from the Dock.
+
+Both find the agent under the pane's shell, or the pane's own process when the pane runs the agent directly.
 
 | Agent | `--pane-pid` finds the session from |
 |---|---|
