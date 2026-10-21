@@ -253,8 +253,13 @@ export const HARNESSES: Record<HarnessName, Harness> = { claude, codex, omp };
  * The executable to fork with: the agent's own binary when the process table names it, so
  * shell functions and PATH differences in the new pane cannot pick another install.
  */
-export function agentExecutable(harness: Harness, agent: ProcessInfo | undefined, path: string | undefined): string {
-	const own = agent && executablePath(agent);
+export function agentExecutable(
+	harness: Harness,
+	agent: ProcessInfo | undefined,
+	path: string | undefined,
+	platform: NodeJS.Platform = process.platform,
+): string {
+	const own = agent && executablePath(agent, platform);
 	if (own && harness.isOwnBinary(own) && existsSync(own)) return own;
 	for (const dir of (path ?? "").split(":")) {
 		const candidate = join(dir, harness.name);
