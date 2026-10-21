@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { parseArgs, resolveSource } from "./cli";
+import { omp } from "./harness";
 import type { ProcessInfo, ProcessTable } from "./process";
 import type { Runner } from "./terminal";
 
@@ -76,7 +77,7 @@ describe("parseArgs", () => {
 			expect(() => parseArgs(["--pane-pid", bad])).toThrow("needs a process id");
 		}
 		expect(() => parseArgs(["--pid"])).toThrow("needs a process id");
-		expect(() => parseArgs(["--harness", "gemini"])).toThrow("--harness must be claude or codex");
+		expect(() => parseArgs(["--harness", "gemini"])).toThrow("--harness must be claude, codex, or omp");
 		expect(() => parseArgs(["--session"])).toThrow("--session needs a session id");
 	});
 });
@@ -136,7 +137,7 @@ describe("resolveSource", () => {
 
 	test("errors outside any agent", async () => {
 		const processes = table(proc(1, 0, "/sbin/launchd"), proc(300, 1, "/bin/zsh", "-zsh"));
-		await expect(resolve([], {}, processes, 300)).rejects.toThrow("not inside a Claude Code or Codex session");
+		await expect(resolve([], {}, processes, 300)).rejects.toThrow("not inside a Claude Code, Codex, or omp session");
 	});
 
 	test("--pane-pid finds a descendant agent and asks its harness for the session", async () => {
@@ -173,10 +174,10 @@ describe("resolveSource", () => {
 			proc(300, 1, "/opt/bin/bun", "bun side"),
 		);
 		await expect(resolve(["--pane-pid", "500"], {}, processes, 300)).rejects.toThrow(
-			"no Claude Code or Codex agent is running under pane process 500",
+			"no Claude Code, Codex, or omp agent is running under pane process 500",
 		);
 		await expect(resolve(["--pid", "501"], {}, processes, 300)).rejects.toThrow(
-			"process 501 is not a running Claude Code or Codex agent",
+			"process 501 is not a running Claude Code, Codex, or omp agent",
 		);
 		await expect(resolve(["--harness", "codex", "--pid", "999"], {}, processes, 300)).rejects.toThrow(
 			"process 999 is not a running codex agent",
@@ -198,7 +199,7 @@ describe("resolveSource", () => {
 	test("--session without --harness outside an agent throws", async () => {
 		const processes = table(proc(1, 0, "/sbin/launchd"), proc(300, 1, "/bin/zsh", "-zsh"));
 		await expect(resolve(["--session", CODEX_ID], {}, processes, 300)).rejects.toThrow(
-			"--session needs --harness claude or --harness codex outside an agent",
+			"--session needs --harness claude, codex, or omp outside an agent",
 		);
 	});
 
@@ -216,5 +217,26 @@ describe("resolveSource", () => {
 		const detected = await resolve(["--session", "abc"], {}, inside, 300);
 		expect(detected.harness.name).toBe("claude");
 		expect(detected.agent?.pid).toBe(100);
+	});
+
+	test("an omp ancestor nearer than Claude Code is asked for its session despite the inherited Claude id", async () => {
+		// claude -> sh -> omp (bun source checkout) -> sh -> side; omp exports no id of its own.
+		const processes = table(
+			proc(1, 0, "/sbin/launchd"),
+			proc(100, 1, "/opt/bin/claude"),
+			proc(101, 100, "/bin/sh"),
+			proc(200, 101, "/opt/bin/bun", "bun --preload /src/omp/scripts/omp.ts /src/omp/src/cli.ts"),
+			proc(201, 200, "/bin/zsh"),
+			proc(300, 201, "/opt/bin/bun", "bun side"),
+		);
+		const asked = spyOn(omp, "sessionFromProcess").mockImplementation(async () => "/s/omp.jsonl");
+		try {
+			const source = await resolve([], { CLAUDE_CODE_SESSION_ID: CLAUDE_ID }, processes, 300);
+			expect(source.harness.name).toBe("omp");
+			expect(source.id).toBe("/s/omp.jsonl");
+			expect(asked.mock.calls[0]?.[0].pid).toBe(200);
+		} finally {
+			asked.mockRestore();
+		}
 	});
 });

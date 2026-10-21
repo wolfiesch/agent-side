@@ -1,5 +1,5 @@
 --!strict
--- side, window half: one command that forks the Claude Code or Codex session
+-- side, window half: one command that forks the Claude Code, Codex, or omp session
 -- in the focused pane into a pane beside it, through the `side` CLI. It works
 -- while the agent is busy, since nothing is typed into the agent's pane.
 

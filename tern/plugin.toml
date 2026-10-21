@@ -2,6 +2,6 @@ schema = 1
 id = "side"
 name = "Side"
 version = "0.1.0"
-description = "Fork the Claude Code or Codex session in the focused pane into a pane beside it, even mid-turn."
+description = "Fork the Claude Code, Codex, or omp session in the focused pane into a pane beside it, even mid-turn."
 icon = "sparkle"
 window = "window.luau"

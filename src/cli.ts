@@ -2,7 +2,7 @@
 /**
  * side: fork the coding-agent session you are in into a nearby terminal pane.
  *
- *   !side why would that cache miss?          from inside Claude Code or Codex
+ *   !side why would that cache miss?          from inside Claude Code, Codex, or omp
  *   side --pane-pid 4242                      from a terminal keybinding, outside the agent
  */
 import { agentExecutable, HARNESSES, type Harness, type HarnessName } from "./harness";
@@ -15,9 +15,9 @@ import {
 const USAGE = `usage: side [options] [harness options] [-- prompt]
        side <prompt>
 
-Fork the Claude Code or Codex session you are in into a nearby pane and ask <prompt> there.
+Fork the Claude Code, Codex, or omp session you are in into a nearby pane and ask <prompt> there.
 
-Run it from inside the agent (!side ... in Claude Code or Codex), or from a terminal
+Run it from inside the agent (!side ... in its shell), or from a terminal
 keybinding with --pane-pid. Options that side does not know pass through to the agent,
 so --model and friends work. Put -- before a prompt when you pass any options.
 
@@ -25,8 +25,8 @@ so --model and friends work. Put -- before a prompt when you pass any options.
   --tab                     open a new tab instead of a split
   --split                   split even when no pane has room
   --left|--right|--up|--down  split in that direction only
-  --harness claude|codex    which agent to fork when it cannot be detected
-  --session <id>            fork this session id instead of detecting one
+  --harness claude|codex|omp  which agent to fork when it cannot be detected
+  --session <id>            fork this session id (omp: id or transcript path) instead of detecting one
   --pane-pid <pid>          find the agent running under this pane's shell
   --pid <pid>               fork the session of this agent process
   --dry-run                 print the plan as JSON and launch nothing
@@ -100,7 +100,9 @@ export function parseArgs(argv: readonly string[]): SideOptions {
 				break;
 			case "--harness": {
 				const name = head[++index];
-				if (name !== "claude" && name !== "codex") throw new Error(`--harness must be claude or codex, got "${name ?? ""}"`);
+				if (name !== "claude" && name !== "codex" && name !== "omp") {
+					throw new Error(`--harness must be claude, codex, or omp, got "${name ?? ""}"`);
+				}
 				options.harness = name;
 				break;
 			}
@@ -140,6 +142,8 @@ export interface Source {
 	agent?: ProcessInfo;
 }
 
+const ANY_AGENT = "Claude Code, Codex, or omp";
+
 function harnessOf(info: ProcessInfo, only?: HarnessName): Harness | undefined {
 	return Object.values(HARNESSES).find((harness) => (!only || harness.name === only) && harness.isAgentProcess(info));
 }
@@ -167,38 +171,37 @@ export async function resolveSource(
 		if (!agent || !harness) {
 			throw new Error(
 				options.pid !== undefined
-					? `process ${options.pid} is not a running ${options.harness ?? "Claude Code or Codex"} agent`
-					: `no ${options.harness ?? "Claude Code or Codex"} agent is running under pane process ${options.panePid}`,
+					? `process ${options.pid} is not a running ${options.harness ?? ANY_AGENT} agent`
+					: `no ${options.harness ?? ANY_AGENT} agent is running under pane process ${options.panePid}`,
 			);
 		}
-		return { harness, id: harness.sessionFromProcess(agent, env), agent };
+		return { harness, id: await harness.sessionFromProcess(agent, env, run), agent };
 	}
 
 	if (options.session !== undefined) {
 		const harness = options.harness ? HARNESSES[options.harness] : nearestAgent && harnessOf(nearestAgent);
-		if (!harness) throw new Error("--session needs --harness claude or --harness codex outside an agent");
+		if (!harness) throw new Error("--session needs --harness claude, codex, or omp outside an agent");
 		return { harness, id: options.session, agent: nearestAgent && harnessOf(nearestAgent) === harness ? nearestAgent : undefined };
 	}
 
-	// Inside an agent: the nearest agent ancestor decides between nested harnesses, and its
-	// exported session id names the session.
+	// Inside an agent the nearest agent ancestor decides between nested harnesses. Its exported
+	// session id names the session; an agent that exports none (omp) is asked through its process.
+	const ancestorHarness = nearestAgent && harnessOf(nearestAgent, options.harness);
+	if (nearestAgent && ancestorHarness) {
+		const id = ancestorHarness.sessionFromEnv(env) ?? (await ancestorHarness.sessionFromProcess(nearestAgent, env, run));
+		return { harness: ancestorHarness, id, agent: nearestAgent };
+	}
 	const exported = Object.values(HARNESSES).filter(
 		(harness) => (!options.harness || harness.name === options.harness) && harness.sessionFromEnv(env),
 	);
-	const ancestorHarness = nearestAgent && harnessOf(nearestAgent, options.harness);
-	const harness = exported.find((candidate) => candidate === ancestorHarness) ?? (exported.length === 1 ? exported[0] : undefined);
-	if (!harness) {
+	if (exported.length !== 1) {
 		throw new Error(
 			exported.length > 1
 				? "both CLAUDE_CODE_SESSION_ID and CODEX_THREAD_ID are set; pass --harness"
-				: "not inside a Claude Code or Codex session: run side from the agent (!side ...), or pass --pane-pid, --pid, or --session",
+				: `not inside a ${ANY_AGENT} session: run side from the agent (!side ...), or pass --pane-pid, --pid, or --session`,
 		);
 	}
-	return {
-		harness,
-		id: harness.sessionFromEnv(env) as string,
-		agent: ancestorHarness === harness ? nearestAgent : undefined,
-	};
+	return { harness: exported[0], id: exported[0].sessionFromEnv(env) as string, agent: undefined };
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -212,7 +215,9 @@ async function main(argv: string[]): Promise<number> {
 	const source = await resolveSource(options, env, run, process.pid);
 	const location = source.harness.locate(source.id, env);
 	const executable = agentExecutable(source.harness, source.agent, env.PATH);
-	const forkArgv = source.harness.forkArgv(executable, source.id, options.harnessArgs, options.prompt);
+	const forkArgv = source.harness.forkArgv(
+		executable, { id: source.id, transcript: location.transcript }, options.harnessArgs, options.prompt,
+	);
 	const terminal = detectTerminal(env);
 	if (options.dryRun) {
 		console.log(JSON.stringify({
