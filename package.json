@@ -15,7 +15,7 @@
 		"access": "public"
 	},
 	"bin": {
-		"side": "./src/cli.ts"
+		"side": "src/cli.ts"
 	},
 	"scripts": {
 		"test": "bun test",
