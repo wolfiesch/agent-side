@@ -1,6 +1,6 @@
 {
 	"name": "@wolfiesch/side",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Fork a running coding-agent session into a nearby terminal pane: Claude Code, Codex, and omp, in tmux, Tern, WezTerm, Kitty, cmux, or Ghostty",
 	"license": "MIT",
 	"repository": {
