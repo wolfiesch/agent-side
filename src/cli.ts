@@ -6,7 +6,6 @@
  *   !side why would that cache miss?          from inside Claude Code, Codex, or omp
  *   side --pane-pid 4242                      from a terminal keybinding, outside the agent
  */
-import { rmSync } from "node:fs";
 import { basename } from "node:path";
 import { agentExecutable, HARNESSES, type ForkSource, type Harness, type HarnessName } from "./harness";
 import {
@@ -245,13 +244,10 @@ async function forkSession(source: Source, options: SideOptions, env: NodeJS.Pro
 			argv: forkArgv,
 		}, null, 2);
 	}
-	// A settled copy is only of use to the fork it was written for.
+	// A failed launch keeps any settled copy: the pane may already be running the fork on it.
 	const result = await launchInTerminal(
 		run, env, process.platform, options.request, location.cwd, forkArgv, paneTitle(options.prompt),
-	).catch((error: unknown) => {
-		if (fork.settled) rmSync(fork.transcript, { force: true });
-		throw error;
-	});
+	);
 	const from = fork.settled ? " from its last finished turn" : "";
 	return `side: forked ${source.harness.name} session ${source.id}${from} into ${result.terminal} ${result.placement} ${result.target}`;
 }
