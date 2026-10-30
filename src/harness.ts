@@ -2,9 +2,10 @@
  * Harness adapters: how to recognize an agent process, which live session it is running, where
  * that session's transcript lives, and the command that forks it into a new interactive session.
  */
-import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, readlinkSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, readlinkSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { executablePath, type ProcessInfo } from "./process";
 import type { Runner } from "./terminal";
 
@@ -16,6 +17,13 @@ export interface SessionLocation {
 	cwd: string;
 }
 
+/** A session to fork. `settled` marks a copy side wrote, cut back to the last finished turn. */
+export interface ForkSource {
+	id: string;
+	transcript: string;
+	settled?: boolean;
+}
+
 export interface Harness {
 	name: HarnessName;
 	/** Session id exported to shell commands the agent runs, including user `!` commands. */
@@ -24,9 +32,14 @@ export interface Harness {
 	/** The session a running agent process is serving; throws when it cannot be named exactly. */
 	sessionFromProcess(info: ProcessInfo, env: NodeJS.ProcessEnv, run: Runner): string | Promise<string>;
 	locate(id: string, env: NodeJS.ProcessEnv): SessionLocation;
+	/**
+	 * The session to fork when `session` may end inside a turn still running: a copy cut back to
+	 * the last finished turn, written only when `write` is set. Without it a harness forks as is.
+	 */
+	settle?(session: ForkSource, write: boolean): ForkSource;
 	/** Whether `path`, the binary an agent process runs, is the agent rather than a runtime hosting it. */
 	isOwnBinary(path: string): boolean;
-	forkArgv(executable: string, session: { id: string; transcript: string }, harnessArgs: readonly string[], prompt: string): string[];
+	forkArgv(executable: string, session: ForkSource, harnessArgs: readonly string[], prompt: string): string[];
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -51,6 +64,46 @@ function argv0Name(info: ProcessInfo): string {
 }
 
 const claudeDir = (env: NodeJS.ProcessEnv): string => env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
+
+const INTERRUPTED = "[Request interrupted by user";
+
+/** Whether a Claude Code transcript entry closes a turn: its timing record, or the note an interrupt leaves. */
+function closesTurn(entry: Record<string, unknown>): boolean {
+	if (entry.type === "system") return entry.subtype === "turn_duration";
+	if (entry.type !== "user") return false;
+	const content = (entry.message as { content?: unknown } | undefined)?.content;
+	if (typeof content === "string") return content.startsWith(INTERRUPTED);
+	return Array.isArray(content) && content.some((part) => typeof part?.text === "string" && part.text.startsWith(INTERRUPTED));
+}
+
+/**
+ * The index of the first line of a Claude Code turn still running, or undefined when the
+ * transcript ends between turns. Claude Code writes a turn's prompt and each step of its reply as
+ * they happen and closes the turn only at the end, so a session forked mid-turn resumes with the
+ * prompt unanswered; Claude Code then answers it "No response requested." and the fork believes
+ * it skipped the work. A transcript with no closed turn (print mode records none) is left alone.
+ */
+export function claudeTurnInProgress(lines: readonly string[]): number | undefined {
+	let closed = false;
+	let start: number | undefined;
+	lines.forEach((line, index) => {
+		let entry: unknown;
+		try {
+			entry = JSON.parse(line);
+		} catch {
+			return;
+		}
+		if (!entry || typeof entry !== "object") return;
+		const record = entry as Record<string, unknown>;
+		if (closesTurn(record)) {
+			closed = true;
+			start = undefined;
+		} else if (start === undefined && (record.type === "user" || record.type === "assistant")) {
+			start = index;
+		}
+	});
+	return closed ? start : undefined;
+}
 
 export const claude: Harness = {
 	name: "claude",
@@ -87,10 +140,34 @@ export const claude: Harness = {
 		return { transcript, cwd: recordedCwd(transcript, (entry) => entry.cwd) };
 	},
 	isOwnBinary: () => true,
+	// A turn still running stays with the original: the fork resumes a copy that ends at the last
+	// finished turn, under its own id, so it needs no --fork-session of its own.
+	settle(session, write) {
+		const lines = readFileSync(session.transcript, "utf8").split("\n");
+		const cut = claudeTurnInProgress(lines);
+		if (cut === undefined) return session;
+		const id = randomUUID();
+		const transcript = join(dirname(session.transcript), `${id}.jsonl`);
+		if (write) {
+			const kept: string[] = [];
+			for (const line of lines.slice(0, cut)) {
+				try {
+					const entry = JSON.parse(line);
+					if (entry && typeof entry === "object" && entry.sessionId === session.id) entry.sessionId = id;
+					kept.push(JSON.stringify(entry));
+				} catch {
+					// Blank or partial line.
+				}
+			}
+			writeFileSync(transcript, `${kept.join("\n")}\n`, { flag: "wx", mode: statSync(session.transcript).mode & 0o777 });
+		}
+		return { id, transcript, settled: true };
+	},
 	// The id form resolves against the launch directory's project, so the fork starts in the
 	// recorded cwd. `--` keeps a prompt that begins with a dash from parsing as an option.
 	forkArgv: (executable, session, harnessArgs, prompt) => [
-		executable, "--resume", session.id, "--fork-session", ...harnessArgs, ...(prompt ? ["--", prompt] : []),
+		executable, "--resume", session.id, ...(session.settled ? [] : ["--fork-session"]), ...harnessArgs,
+		...(prompt ? ["--", prompt] : []),
 	],
 };
 
