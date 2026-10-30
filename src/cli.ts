@@ -7,7 +7,7 @@
  *   side --pane-pid 4242                      from a terminal keybinding, outside the agent
  */
 import { basename } from "node:path";
-import { agentExecutable, HARNESSES, type Harness, type HarnessName } from "./harness";
+import { agentExecutable, HARNESSES, type ForkSource, type Harness, type HarnessName } from "./harness";
 import {
 	blockResponse, hookCommand, hookPaths, installHook, parseHookInput, parseTrigger, uninstallHook, type HookHarness,
 } from "./hook";
@@ -227,9 +227,9 @@ export async function resolveSource(
 async function forkSession(source: Source, options: SideOptions, env: NodeJS.ProcessEnv, run: Runner): Promise<string> {
 	const location = source.harness.locate(source.id, env);
 	const executable = agentExecutable(source.harness, source.agent ?? source.binaryHost, env.PATH);
-	const forkArgv = source.harness.forkArgv(
-		executable, { id: source.id, transcript: location.transcript }, options.harnessArgs, options.prompt,
-	);
+	const found: ForkSource = { id: source.id, transcript: location.transcript };
+	const fork = source.harness.settle?.(found, !options.dryRun) ?? found;
+	const forkArgv = source.harness.forkArgv(executable, fork, options.harnessArgs, options.prompt);
 	const terminal = detectTerminal(env);
 	if (options.dryRun) {
 		return JSON.stringify({
@@ -237,16 +237,19 @@ async function forkSession(source: Source, options: SideOptions, env: NodeJS.Pro
 			session: source.id,
 			agentPid: source.agent?.pid,
 			transcript: location.transcript,
+			settledTranscript: fork.settled ? fork.transcript : undefined,
 			cwd: location.cwd,
 			terminal,
 			request: options.request,
 			argv: forkArgv,
 		}, null, 2);
 	}
+	// A failed launch keeps any settled copy: the pane may already be running the fork on it.
 	const result = await launchInTerminal(
 		run, env, process.platform, options.request, location.cwd, forkArgv, paneTitle(options.prompt),
 	);
-	return `side: forked ${source.harness.name} session ${source.id} into ${result.terminal} ${result.placement} ${result.target}`;
+	const from = fork.settled ? " from its last finished turn" : "";
+	return `side: forked ${source.harness.name} session ${source.id}${from} into ${result.terminal} ${result.placement} ${result.target}`;
 }
 
 /**

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { agentExecutable, claude, codex, omp, ompSessionFromOpenFiles, openFiles } from "./harness";
@@ -178,6 +178,62 @@ describe("claude.locate", () => {
 		expect(() => claude.locate(UUID, { CLAUDE_CONFIG_DIR: join(root, "missing") })).toThrow(
 			"no Claude Code transcript",
 		);
+	});
+});
+
+describe("claude.settle", () => {
+	const entry = (type: string, extra: Record<string, unknown> = {}) => JSON.stringify({ type, sessionId: UUID, ...extra });
+	const prompt = (text: string) => entry("user", { message: { role: "user", content: text } });
+	const reply = (text: string) => entry("assistant", { message: { role: "assistant", content: [{ type: "text", text }] } });
+	const turnEnd = entry("system", { subtype: "turn_duration" });
+	const interrupted = entry("user", { message: { role: "user", content: [{ type: "text", text: "[Request interrupted by user]" }] } });
+	const firstTurn = [prompt("tour?"), reply("a tour"), turnEnd, entry("custom-title", { customTitle: "Tour" })];
+
+	const write = (lines: string[]) => {
+		const transcript = join(root, `${UUID}.jsonl`);
+		writeFileSync(transcript, `${lines.join("\n")}\n`);
+		return { id: UUID, transcript };
+	};
+	const read = (path: string) => readFileSync(path, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+
+	test("cuts a turn still running out of a copy under a new id, and resumes the copy without forking it again", () => {
+		const source = write([...firstTurn, prompt("add getPrices"), entry("attachment"), reply("working"), "{ partial"]);
+		const fork = claude.settle?.(source, true);
+
+		expect(fork?.settled).toBe(true);
+		expect(fork?.id).not.toBe(UUID);
+		expect(fork?.transcript).toBe(join(root, `${fork?.id}.jsonl`));
+		const copied = read(fork?.transcript as string);
+		expect(copied.map((e) => e.type)).toEqual(["user", "assistant", "system", "custom-title"]);
+		expect(copied.every((e) => e.sessionId === fork?.id)).toBe(true);
+		expect(readFileSync(source.transcript, "utf8").trim().split("\n")).toHaveLength(8);
+		expect(claude.forkArgv("/bin/claude", fork as never, [], "why?")).toEqual([
+			"/bin/claude", "--resume", fork?.id as string, "--", "why?",
+		]);
+	});
+
+	test("forks a transcript that ends between turns as is", () => {
+		const source = write(firstTurn);
+		expect(claude.settle?.(source, true)).toBe(source);
+		expect(readdirSync(root)).toEqual([`${UUID}.jsonl`]);
+	});
+
+	test("an interrupt closes a turn, and a prompt after it is still running", () => {
+		expect(claude.settle?.(write([...firstTurn, prompt("long job"), reply("step"), interrupted]), true)?.settled).toBeUndefined();
+
+		const fork = claude.settle?.(write([...firstTurn, prompt("long job"), interrupted, prompt("again")]), true);
+		expect(read(fork?.transcript as string).at(-1).message.content[0].text).toBe("[Request interrupted by user]");
+	});
+
+	test("leaves a transcript with no finished turn alone", () => {
+		const source = write([prompt("first prompt"), reply("still going")]);
+		expect(claude.settle?.(source, true)).toBe(source);
+	});
+
+	test("names the copy without writing it when asked not to", () => {
+		const fork = claude.settle?.(write([...firstTurn, prompt("add getPrices")]), false);
+		expect(fork?.settled).toBe(true);
+		expect(existsSync(fork?.transcript as string)).toBe(false);
 	});
 });
 

@@ -77,7 +77,7 @@ Use `--` to separate flags from the prompt. Without it, a leading `-` means flag
 
 ### While the agent is busy
 
-`/side`, `$side`, and `!side` wait for the current turn: both Claude Code and Codex queue a prompt submitted mid-turn and run its hook only once the queue drains. To fork mid-turn, run `side` against the pane from outside the agent. The fork starts from the last point the agent saved, and the running turn continues undisturbed.
+`/side`, `$side`, and `!side` wait for the current turn: both Claude Code and Codex queue a prompt submitted mid-turn and run its hook only once the queue drains. Claude Code's "send now" (ctrl+enter) runs the hook at once but ends the running turn, so avoid it for `/side`. To fork mid-turn, run `side` against the pane from outside the agent. The running turn continues undisturbed. A Claude Code fork starts from the last finished turn: `side` resumes a copy of the transcript that leaves out the turn still running, which would otherwise reach the fork as a prompt with no answer.
 
 **tmux.** Bind a key:
 
